@@ -11,10 +11,10 @@ import java.util.List;
 public class TranslitRusToLat {
 
     static final char[] rus = {'а', 'б' , 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о',
-                    'п', 'р', 'с',  'т', 'у' , 'ф', 'х', 'ц', 'ч', 'ш', 'щ', 'ы', 'э', 'ю', 'я'};
+            'п', 'р', 'с',  'т', 'у' , 'ф', 'х', 'ц', 'ч', 'ш', 'щ', 'ы', 'э', 'ю', 'я'};
 
     static final String[] lat  = {"a", "b" , "v", "g", "d", "e", "jo", "zh", "z", "i", "j", "k", "l", "m", "n", "o",
-                    "p", "r", "s",  "t", "u" , "f", "h", "c", "ch", "sh", "w", "y", "e", "ju", "ja"};
+            "p", "r", "s",  "t", "u" , "f", "h", "c", "ch", "sh", "w", "y", "e", "ju", "ja"};
 
     private static String translitChar(char c){
         for(int i=0; i < rus.length; i++){
@@ -50,7 +50,7 @@ public class TranslitRusToLat {
         }
     }
 
-    public static String translitString(String word){
+    public static String translitString(String word){;
         StringBuffer sb = new StringBuffer();
         if(word.length()>0){
             char[] chars = word.toCharArray();
@@ -77,17 +77,19 @@ public class TranslitRusToLat {
             String mail;
 
             while((line = bufferedReader.readLine()) != null){
-                line = line.toLowerCase();
                 String[] words = line.split("\\s+");
 
                 if (words.length>1){
                     lastname = words[0].replaceAll("[-+.^:,]","");
                     firstname = words[1].replaceAll("[-+.^:,]","");
-                    login = translitChar(firstname.charAt(0)) + translitString(lastname);
+                    login = translitChar(firstname.toLowerCase().charAt(0)) + translitString(lastname.toLowerCase());
+                    if (words.length > 3 && words[3].contains("@"))
+                        mail = words[3].trim();
+                    else
+                        mail = login+"@gk21.ru";
 
                     for (int i=2; i<words.length;i++){
                         if(words[i].matches(".*\\d+.*")){
-                            System.out.println(words[i]);
                             String[] parts = words[i].split("\\D");
                             if(parts.length==3){
                                 password = "";
@@ -107,7 +109,7 @@ public class TranslitRusToLat {
                     account.put("firstname", firstname);
                     account.put("login", login);
                     account.put("password", password);
-                    account.put("mail", login+"@gk21.ru");
+                    account.put("mail", mail);
                     password = "111111";
                     redmineAccountList.add(account);
                 }
@@ -129,7 +131,6 @@ public class TranslitRusToLat {
     }
 
     public static void main(String args[]){
-
         if (args.length > 0){
             String fileName = args[0];
             List<JSONObject> redmineAccountList = getAccountFromFile(fileName);

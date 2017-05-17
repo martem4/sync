@@ -26,7 +26,6 @@ public class TranslitRusToLat {
     }
 
     private static  void createRedmineAccount(List<JSONObject> redmineAccountList) throws IOException {
-        CloseableHttpClient httpClient = HttpClients.createDefault();
         final String url = "http://172.172.174.100/redmine/users.json?key=ac2c6958b64fe1cb59fb8e07ab662472810c695a";
         for (JSONObject j : redmineAccountList){
             JSONArray ja = new JSONArray();
@@ -34,10 +33,11 @@ public class TranslitRusToLat {
             JSONObject userJson = new JSONObject();
             userJson.put("user", ja);
             HttpPost postRequest = new HttpPost(url);
-            postRequest.addHeader("content-type", "application/json");
+            postRequest.addHeader("content-type", "application/json; charset=UTF-8");
             String jsonString = userJson.toString().replace("[","").replace("]","");
-            StringEntity params = new StringEntity(jsonString.toString());
+            StringEntity params = new StringEntity(jsonString.toString(), "UTF-8");
             postRequest.setEntity(params);
+            CloseableHttpClient httpClient = HttpClients.createDefault();
             try {
                 httpClient.execute(postRequest);
                 System.out.println("User : " + j.get("login") + " created.");

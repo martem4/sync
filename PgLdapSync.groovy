@@ -69,39 +69,46 @@ class PgLdapSync {
         def query = "select fam , im , TO_CHAR(birth_date, 'DDMMYY') as passw ,id\n" +
                 " from people p\n" +
                 " where p.is_active\n" +
-                "  and p.date_create > '2017-10-18 00:00:00'\n" +
-                "limit 10;"
+                "  and p.date_create > now()::date-1" +
+                "  and  p.date_create < now()::date;\n"
 
         sql.eachRow(query) { row ->
 
             String fam = new String(row.fam)
             String im = new String(row.im)
-            String login = translitChar(im.toLowerCase().charAt(0)) + translitString(fam.toLowerCase())
-            String dn = "uid=" + login + ",ou=people,dc=century,dc=local"
-            String filter = "uid=" + login
-            LDAPSearchResults searchResults = lc.search(base, LDAPConnection.SCOPE_ONE, filter, null, false)
-            sleep(3000)
+            int loginIndex = 0
+            String loginName = translitChar(im.toLowerCase().charAt(0))
+            String loginSurname = translitString(fam.toLowerCase())
+            String login = loginName + loginSurname
 
-            if (searchResults.getCount() == 0) {
-                LDAPAttributeSet attributeSet = new LDAPAttributeSet()
-                attributeSet.add(new LDAPAttribute("objectclass", new String("inetOrgPerson")))
-                attributeSet.add(new LDAPAttribute("sn", fam))
-                attributeSet.add(new LDAPAttribute("givenName", im))
-                attributeSet.add(new LDAPAttribute("displayName", fam + " " + im))
-                attributeSet.add(new LDAPAttribute("cn", fam + " " + im))
-                attributeSet.add(new LDAPAttribute("uid", login))
-                attributeSet.add(new LDAPAttribute("userPassword", binaryMd5Base64(new String(row.passw))))
-                attributeSet.add(new LDAPAttribute("mail", new String(login + "@gk21.ru")))
-                attributeSet.add(new LDAPAttribute("employeeNumber", new String(row.id.toString())))
-                LDAPEntry newEntry = new LDAPEntry(dn, attributeSet)
-                lc.add(newEntry)
-                println("\n-----------------------------------------------------------------")
-                println("User " + login + " created")
-                println("-----------------------------------------------------------------")
-            } else if (searchResults.getCount() >= 1) {
-                println("\n-----------------------------------------------------------------")
-                println("User " + login + " already exists")
-                println("-----------------------------------------------------------------")
+            def existFlag = true
+            while(existFlag) {
+                String dn = "uid=" + login + ",ou=people,dc=century,dc=local"
+                String filter = "uid=" + login
+                LDAPSearchResults searchResults = lc.search(base, LDAPConnection.SCOPE_ONE, filter, null, false)
+                sleep(3000)
+                if (searchResults.getCount() == 0) {
+                    existFlag = false
+                    LDAPAttributeSet attributeSet = new LDAPAttributeSet()
+                    attributeSet.add(new LDAPAttribute("objectclass", new String("inetOrgPerson")))
+                    attributeSet.add(new LDAPAttribute("sn", fam))
+                    attributeSet.add(new LDAPAttribute("givenName", im))
+                    attributeSet.add(new LDAPAttribute("displayName", fam + " " + im))
+                    attributeSet.add(new LDAPAttribute("cn", fam + " " + im))
+                    attributeSet.add(new LDAPAttribute("uid", login))
+                    attributeSet.add(new LDAPAttribute("userPassword", binaryMd5Base64(new String(row.passw))))
+                    attributeSet.add(new LDAPAttribute("mail", new String(login + "@gk21.ru")))
+                    attributeSet.add(new LDAPAttribute("employeeNumber", new String(row.id.toString())))
+                    LDAPEntry newEntry = new LDAPEntry(dn, attributeSet)
+                    lc.add(newEntry)
+                    println("\n-----------------------------------------------------------------")
+                    println("User " + login + " created")
+                    println("-----------------------------------------------------------------")
+                }
+                else {
+                    loginName += translitChar(im.toLowerCase().charAt(++loginIndex))
+                    login = loginName + loginSurname
+                }
             }
         }
     }
@@ -148,13 +155,50 @@ class PgLdapSync {
         }
     }
 
-    static void blockLdapUser() {
-        query = "select *\n" +
-                "from people p\n" +
-                " where p.quit_date > now()::date - 2\n" +
-                "  and p.quit_date < now()::date - 1"
+    static void blockLdapUser(LDAPConnection lc, Sql sql) {
+        def query = "select fam , im , TO_CHAR(birth_date, 'DDMMYY') as passw ,id, date_create\n"+
+                    " from people p\n"+
+                    " where p.is_active\n"+
+                    " and p.quit_date > now()::date - 1\n"+
+                    " and p.quit_date < now()::date;\n"
 
+        LDAPSearchResults searchResults = null
+        sql.eachRow(query) { row ->
+            String fam = new String(row.fam)
+            String im = new String(row.im)
+            String login = translitChar(im.toLowerCase().charAt(0)) + translitString(fam.toLowerCase())
+            String dn = "uid=" + login + ",ou=people,dc=century,dc=local"
+            String filter = "uid=" + login
+            searchResults = lc.search(base, LDAPConnection.SCOPE_ONE, filter, null, false)
+            sleep(3000)
 
+            if (searchResults.getCount() != 0) {
+                while (searchResults.hasMore()) {
+                    LDAPEntry entry = searchResults.next()
+                    String entryDn = entry.getDN()
+                    def random = Math.abs(new Random().nextInt(1000000)) + 1
+                    LDAPAttribute ldapAttribute = new LDAPAttribute("userPassword", random.toString())
+                    sleep(3000)
+                    LDAPModification ldapMod = new LDAPModification(LDAPModification.REPLACE, ldapAttribute)
+                    sleep(3000)
+                    try {
+                        lc.modify(entryDn, ldapMod)
+                        sleep(3000)
+                        System.out.println(entryDn + " is successfully blocked!")
+                    }
+                    catch (LDAPException e) {
+                        if (e.getLDAPResultCode() == LDAPException.NO_SUCH_OBJECT) {
+                            System.out.println("Error: No such entry")
+                        } else if (e.getLDAPResultCode() == LDAPException.INSUFFICIENT_ACCESS_RIGHTS) {
+                            System.out.println("Error: Insufficient rights")
+                        } else if (e.getLDAPResultCode() == LDAPException.ATTRIBUTE_OR_VALUE_EXISTS) {
+                            System.out.println("Error: Attribute or value exists")
+                        } else
+                            System.out.println("Error: " + e.toString())
+                    }
+                }
+            }
+        }
     }
 
 
@@ -174,8 +218,8 @@ class PgLdapSync {
         lc.connect(ldapHost, ldapPort)
         lc.bind(ldapVersion, ldapUser, ldapUserPass.getBytes("UTF-8"))
 
-        //syncUserTabnum(lc, sql)
         syncNewLdapUserFromPg(lc, sql)
+        blockLdapUser(lc, sql)
 
         lc.disconnect()
 

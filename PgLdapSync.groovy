@@ -9,23 +9,30 @@ import com.novell.ldap.LDAPSearchResults
 import com.novell.ldap.LDAPAttributeSet
 import org.apache.commons.codec.binary.*
 
+import java.text.SimpleDateFormat
+
 class PgLdapSync {
 
-    static int ldapPort = 389
+    static final int ldapPort = 389
     static int ldapVersion = 2
     static String ldapHost = "172.172.173.18"
     static String ldapUser = "cn=Manager,dc=century,dc=local"
     static String ldapUserPass = "panasonic"
-    static String pgUser = "postgres"
-    static String pgPass = "oldaso"
+    static String pgUser = "system"
+    static String pgPass = "slafastat"
+    static String pgDriver = "org.postgresql.Driver"
     static String pgUrl = "jdbc:postgresql://172.172.173.173:5432/century"
     static String base = "ou=people,dc=century,dc=local"
+    static String syncLogFilePath = "sync.log"
 
-    static
-    final char[] rus = ['а', 'б', 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', 'ш', 'щ', 'ы', 'э', 'ю', 'я']
+    static final char[] rus = ['а', 'б', 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й',
+                                'к', 'л', 'м', 'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф',
+                                'х', 'ц', 'ч', 'ш', 'щ', 'ы', 'э', 'ю', 'я']
 
-    static final String[] lat = ["a", "b", "v", "g", "d", "e", "jo", "zh", "z", "i", "j", "k", "l", "m", "n", "o",
-                                 "p", "r", "s", "t", "u", "f", "h", "c", "ch", "sh", "w", "y", "e", "ju", "ja"]
+    static final String[] lat = ["a", "b", "v", "g", "d", "e", "jo", "zh", "z",
+                                 "i", "j", "k", "l", "m", "n", "o", "p", "r", "s",
+                                 "t", "u", "f", "h", "c", "ch", "sh", "w", "y", "e",
+                                 "ju", "ja"]
 
     static String translitChar(char c) {
         for (int i = 0; i < rus.length; i++) {
@@ -63,13 +70,38 @@ class PgLdapSync {
         }
     }
 
+    private static String getLastSyncTime() {
+        File syncLogFile = new File(syncLogFilePath)
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+        String today = sdf.format(new Date())
+
+        if (!syncLogFile.exists()){
+            syncLogFile.createNewFile()
+            return today
+        }
+        else {
+            def lines = syncLogFile.readLines()
+            if ((lines.size() > 0)) {
+                if (lines.get(lines.size()-1) == null)
+                    return today
+                else return lines.get(lines.size()-1)
+            }else return today
+        }
+    }
+
+    private static void writeLastSyncTimeToLog(){
+        File syncLogFile = new File(syncLogFilePath)
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+        String today = sdf.format(new Date())
+        syncLogFile << '\n' + today
+    }
 
     static void syncNewLdapUserFromPg(LDAPConnection lc, Sql sql) {
 
         def query = "select fam , im , TO_CHAR(birth_date, 'DDMMYY') as passw ,id\n" +
                 " from people p\n" +
                 " where p.is_active\n" +
-                "  and p.date_create > now()::date-1" +
+                "  and p.date_create > '" + getLastSyncTime() + "'" +
                 "  and  p.date_create < now()::date;\n"
 
         sql.eachRow(query) { row ->
@@ -83,7 +115,7 @@ class PgLdapSync {
 
             def existFlag = true
             while(existFlag) {
-                String dn = "uid=" + login + ",ou=people,dc=century,dc=local"
+                String dn = "uid=" + login + "," + base
                 String filter = "uid=" + login
                 LDAPSearchResults searchResults = lc.search(base, LDAPConnection.SCOPE_ONE, filter, null, false)
                 sleep(3000)
@@ -111,17 +143,20 @@ class PgLdapSync {
                 }
             }
         }
+        writeLastSyncTimeToLog()
     }
 
-    static void syncUserTabnum(LDAPConnection lc, Sql sql) {
-        def query = "select fam ,im , TO_CHAR(birth_date, 'DDMMYY') as passw ,p.id ,login, tabnum" +
-                "   from security_user su join people p on su.tabnum = p.id " +
-                "   order by login;"
+    static void syncQuitDate(LDAPConnection lc, Sql sql) {
+        def query = "select fam , im , TO_CHAR(birth_date, 'DDMMYY') as passw ,id, quit_date\n"+
+                    " from people\n"+
+                    " where not quit_date is null\n"+
+                     " order by quit_date;"
 
         LDAPSearchResults searchResults = null
         sql.eachRow(query) { row ->
-            String dn = "uid=" + row.login + ",ou=people,dc=century,dc=local"
-            String filter = "uid=" + row.login
+
+
+            String filter = "employeeNumber=" + row.id.toString()
             searchResults = lc.search(base, LDAPConnection.SCOPE_ONE, filter, null, false)
             sleep(3000)
 
@@ -131,12 +166,13 @@ class PgLdapSync {
                     sleep(3000)
                     String entryDn = entry.getDN()
 
-                    LDAPAttribute ldapAttribute = new LDAPAttribute("employeeNumber", new String(row.tabnum.toString()))
                     sleep(3000)
-                    LDAPModification ldapMod = new LDAPModification(LDAPModification.REPLACE, ldapAttribute)
+                    LDAPAttribute quitDateAttribute = new LDAPAttribute("quiteDate", new String(row.quit_date.toString()))
+                    LDAPModification quitDateMod = new LDAPModification(LDAPModification.ADD, quitDateAttribute)
+
                     sleep(3000)
                     try {
-                        lc.modify(entryDn, ldapMod)
+                        lc.modify(entryDn, quitDateMod)
                         sleep(3000)
                         System.out.println(entryDn + " is successfully modified!")
                     }
@@ -156,19 +192,16 @@ class PgLdapSync {
     }
 
     static void blockLdapUser(LDAPConnection lc, Sql sql) {
-        def query = "select fam , im , TO_CHAR(birth_date, 'DDMMYY') as passw ,id, date_create\n"+
+        def query = "select id\n"+
                     " from people p\n"+
                     " where p.is_active\n"+
-                    " and p.quit_date > now()::date - 1\n"+
+                    " and p.quit_date >  '" + getLastSyncTime() + "'" +
                     " and p.quit_date < now()::date;\n"
 
         LDAPSearchResults searchResults = null
         sql.eachRow(query) { row ->
-            String fam = new String(row.fam)
-            String im = new String(row.im)
-            String login = translitChar(im.toLowerCase().charAt(0)) + translitString(fam.toLowerCase())
-            String dn = "uid=" + login + ",ou=people,dc=century,dc=local"
-            String filter = "uid=" + login
+
+            String filter = "employeeNumber=" + row.id.toString()
             searchResults = lc.search(base, LDAPConnection.SCOPE_ONE, filter, null, false)
             sleep(3000)
 
@@ -211,7 +244,7 @@ class PgLdapSync {
         */
 
 
-        def sql = Sql.newInstance(pgUrl, pgUser, pgPass, "org.postgresql.Driver")
+        def sql = Sql.newInstance(pgUrl, pgUser, pgPass, pgDriver)
 
 
         LDAPConnection lc = new LDAPConnection()
